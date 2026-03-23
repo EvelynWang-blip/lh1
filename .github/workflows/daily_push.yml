@@ -21,12 +21,10 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          # 告诉 GitHub 去 lh 文件夹里找依赖文件
-          pip install -r lh/requirements.txt
+          pip install -r requirements.txt
 
       - name: Run daily push
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
-        # 告诉 GitHub 先进入 lh 文件夹再运行程序
-        run: cd lh && python main.py
+        run: python main.py
