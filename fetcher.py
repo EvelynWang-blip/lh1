@@ -21,7 +21,7 @@ class NewsFetcher:
     def fetch_en_news(self):
         news_list = []
         # Get timestamp for last 24 hours
-        yesterday = datetime.datetime.now() - datetime.timedelta(days=1)
+        yesterday = datetime.datetime.now() - datetime.timedelta(days=7)
         timestamp = int(yesterday.timestamp())
 
         # Hacker News
