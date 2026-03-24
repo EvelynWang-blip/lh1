@@ -46,47 +46,46 @@ class NewsFetcher:
         return data
 
 def main():
-    print("--- 启动私域运营深度内参系统 ---")
+    print("--- 启动私域运营内参系统 (含 AI 兜底) ---")
     fetcher = NewsFetcher()
     raw_data = fetcher.fetch_all()
     
+    # 尝试使用 AI 总结
+    report_text = ""
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
     try:
-        # 核心 AI 处理逻辑：严格按照用户要求的模块输出
         prompt = """
         你是一名顶尖跨境私域运营专家。请根据提供的资讯，严格按照以下格式输出一份运营简报：
-        
-        ① 内容模块：
-        - TikTok：提取3条近期爆款内容/方向
-        - IG：提取3个海外审美/视觉趋势
-        
-        ② 用户模块：
-        - Reddit：总结3条高互动讨论（重点提取用户吐槽或未满足的需求）
-        - Amazon：基于趋势总结10条典型用户评论特征（风格/价格/偏好）
-        
-        ③ 竞品模块：
-        - 监控2个典型品牌动态（如Casetify或类似DTC品牌的新动作）
-        
-        ④ 私域与选题：
-        - 1个社群玩法/营销案例总结
-        - 提供3-5条可直接用于Facebook私域群组的【选题建议】
-        
-        输出要求：中文，条理清晰，直接给干货。输出JSON，键为'report'。
+        ① 内容模块：TikTok爆款方向、IG审美趋势
+        ② 用户模块：Reddit高互动讨论(吐槽/需求)、Amazon用户评论特征总结
+        ③ 竞品模块：典型品牌动态(如Casetify)
+        ④ 私域与选题：1个社群玩法案例、3-5条FB群组选题建议
+        输出要求：中文，条理清晰。输出JSON，键为'report'。
         """
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "system", "content": prompt}, {"role": "user", "content": json.dumps(raw_data, ensure_ascii=False)}],
             response_format={"type": "json_object"}
         )
-        report_text = json.loads(response.choices[0].message.content).get("report", "生成失败")
+        report_text = json.loads(response.choices[0].message.content).get("report", "")
     except Exception as e:
-        report_text = f"AI 处理出错: {e}"
+        print(f"DEBUG: AI 总结失败 ({e})，进入无 AI 模式。")
+        # --- 兜底逻辑：手动拼接原始数据 ---
+        report_text = "⚠️ [提示: AI 额度不足，当前显示原始热点链接]\n\n"
+        report_text += "📌 海外营销趋势:\n"
+        for item in raw_data["marketing"][:5]:
+            report_text += f"- {item['title']}\n  🔗 {item['url']}\n"
+        report_text += "\n💬 Reddit 用户讨论:\n"
+        for item in raw_data["reddit"][:3]:
+            report_text += f"- {item['title']}\n  🔗 {item['url']}\n"
+        report_text += "\n🏢 品牌/竞品动态:\n"
+        for item in raw_data["brands"][:2]:
+            report_text += f"- {item['title']}\n  🔗 {item['url']}\n"
 
     # 推送逻辑
     webhook_url = os.getenv("FEISHU_WEBHOOK_URL")
     if webhook_url:
         now = datetime.datetime.now(pytz.timezone('Asia/Shanghai'))
-        # 飞书推送格式优化
         payload = {
             "msg_type": "text",
             "content": {
