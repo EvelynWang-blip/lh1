@@ -4,91 +4,94 @@ import feedparser
 import datetime
 import json
 import pytz
-from openai import OpenAI
+import re
 
-class NewsFetcher:
+class GlobalTrendRadar:
     def __init__(self):
-        # 1. 纯海外顶尖营销博客 RSS
-        self.en_rss = [
-            {"name": "Social Media Today", "url": "https://www.socialmediatoday.com/feeds/news/"},
-            {"name": "Search Engine Journal", "url": "https://www.searchenginejournal.com/feed/"}
-        ]
-        # 2. 海外营销人社区
-        self.en_community = "https://www.reddit.com/r/AI_Marketing/hot.json?limit=10"
-        # 3. 中文出海深度观察 (仅保留 2 条 )
-        self.cn_rss = "https://36kr.com/feed"
+        self.google_trends_rss = "https://trends.google.com/trends/trendingsearches/daily/rss?geo=US"
+        self.marketing_rss = "https://www.socialmediatoday.com/feeds/news/"
+        self.reddit_subs = ["tech", "ecommerce", "gadgets", "phonecases"]
+        self.headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64 ) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
 
-    def fetch_en(self ):
-        news_list = []
-        # 抓取博客 RSS
-        for source in self.en_rss:
+    def extract_keywords(self, text):
+        # 简单逻辑提取关键词：提取大写字母单词或特定电商关键词
+        words = re.findall(r'\b[A-Z][a-z]+\b|\b[A-Z]{2,}\b|iPhone|TikTok|Magsafe|Casetify|Amazon|Facebook|Instagram', text)
+        # 去重并格式化为标签
+        unique_keywords = sorted(list(set(words)))
+        return " ".join([f"#{w}" for w in unique_keywords[:4]]) if unique_keywords else "#Trend"
+
+    def fetch_trends(self):
+        data = {"hot_search": [], "platform_trends": [], "community_voice": []}
+        
+        # A. 抓取 Google 热搜
+        try:
+            resp = requests.get(self.google_trends_rss, headers=self.headers, timeout=15)
+            feed = feedparser.parse(resp.content)
+            for e in feed.entries[:5]:
+                data["hot_search"].append({"title": e.title, "url": e.link, "tags": self.extract_keywords(e.title)})
+        except: pass
+
+        # B. 抓取社媒平台趋势
+        try:
+            resp = requests.get(self.marketing_rss, headers=self.headers, timeout=15)
+            feed = feedparser.parse(resp.content)
+            for e in feed.entries[:5]:
+                data["platform_trends"].append({"title": e.title, "url": e.link, "tags": self.extract_keywords(e.title)})
+        except: pass
+
+        # C. 抓取 Reddit 社区热议
+        for sub in self.reddit_subs:
             try:
-                feed = feedparser.parse(source["url"])
-                for entry in feed.entries[:3]:
-                    news_list.append({"title": entry.title, "url": entry.link, "source": source["name"], "lang": "en"})
-            except Exception as e: print(f"Error {source['name']}: {e}")
-        # 抓取 Reddit 社区热点
-        try:
-            headers = {'User-Agent': 'Mozilla/5.0'}
-            resp = requests.get(self.en_community, headers=headers, timeout=10)
-            if resp.status_code == 200:
-                for post in resp.json()['data']['children'][:4]:
-                    p = post['data']
-                    news_list.append({"title": p['title'], "url": f"https://www.reddit.com{p['permalink']}", "source": "Reddit Community", "lang": "en"} )
-        except Exception as e: print(f"Error Reddit: {e}")
-        return news_list
-
-    def fetch_cn(self):
-        news_list = []
-        try:
-            feed = feedparser.parse(self.cn_rss)
-            # 仅筛选与“出海”、“跨境”、“全球”相关的深度内容
-            for entry in feed.entries:
-                if any(k in entry.title for k in ["出海", "跨境", "全球", "海外", "Amazon", "TikTok"]):
-                    news_list.append({"title": entry.title, "url": entry.link, "source": "36氪出海", "lang": "cn"})
-                if len(news_list) >= 4: break
-        except Exception as e: print(f"Error CN: {e}")
-        return news_list
+                url = f"https://www.reddit.com/r/{sub}/hot.json?limit=3"
+                resp = requests.get(url, headers=self.headers, timeout=15 )
+                if resp.status_code == 200:
+                    posts = resp.json().get('data', {}).get('children', [])
+                    for post in posts:
+                        p = post['data']
+                        data["community_voice"].append({
+                            "title": f"[{sub}] {p['title']}", 
+                            "url": f"https://www.reddit.com{p['permalink']}",
+                            "tags": self.extract_keywords(p['title'] )
+                        })
+            except: pass
+        return data
 
 def main():
-    print("--- 启动全球营销 AI 灵感系统 ---")
-    fetcher = NewsFetcher()
-    en_news = fetcher.fetch_en()
-    cn_news = fetcher.fetch_cn()
+    print("--- 启动【关键词雷达版】系统 ---")
+    radar = GlobalTrendRadar()
+    raw_data = radar.fetch_trends()
     
-    # 严格按照 6 条海外 + 4 条深度出海的比例
-    selected = en_news[:6] + cn_news[:4]
+    # 构建推送文本 (完全跳过 AI 逻辑，直接展示关键词标签)
+    now = datetime.datetime.now(pytz.timezone('Asia/Shanghai'))
+    report_text = f"🌐 全球趋势雷达 & 私域灵感 | {now.strftime('%Y-%m-%d')}\n\n"
     
-    # AI 总结：要求其针对 Facebook 私域运营给出建议
-    final_news = []
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    try:
-        prompt = """
-        你是一名顶尖的跨境电商私域运营专家。请针对以下资讯给出建议：
-        1. 英文标题请提供【中英对照】。
-        2. 摘要请重点分析：该热点如何转化为 Facebook 群组的互动文案，或者揭示了海外用户什么样的新喜好。
-        3. 输出 JSON 格式，包含键 'news'。
-        """
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "system", "content": prompt}, {"role": "user", "content": json.dumps(selected, ensure_ascii=False)}],
-            response_format={"type": "json_object"}
-        )
-        final_news = json.loads(response.choices[0].message.content).get("news", [])
-    except Exception as e:
-        print(f"DEBUG: AI 总结失败 ({e})")
-        for item in selected:
-            final_news.append({"title": item["title"], "summary": "（AI 摘要暂不可用，请查看原文获取灵感）", "url": item["url"]})
+    if raw_data["hot_search"]:
+        report_text += "🔥 Google/平台热搜 (发现页):\n"
+        for item in raw_data["hot_search"][:5]:
+            report_text += f"- {item['title']}\n  🏷️ 关键词: {item['tags']}\n  🔗 {item['url']}\n"
+    
+    if raw_data["platform_trends"]:
+        report_text += "\n📱 社媒趋势/达人动态 (TikTok/YT/FB):\n"
+        for item in raw_data["platform_trends"][:5]:
+            report_text += f"- {item['title']}\n  🏷️ 关键词: {item['tags']}\n  🔗 {item['url']}\n"
+    
+    if raw_data["community_voice"]:
+        report_text += "\n💬 垂直社区真实声音 (Reddit):\n"
+        for item in raw_data["community_voice"][:6]:
+            report_text += f"- {item['title']}\n  🏷️ 关键词: {item['tags']}\n  🔗 {item['url']}\n"
+
+    if not any(raw_data.values()):
+        report_text += "❌ 抱歉，今日全平台抓取均被拦截或无更新，请稍后再试。"
+
+    report_text += "\n💡 运营提示：点击链接可直达海外热议现场，捕捉第一手文案灵感！"
 
     # 推送逻辑
     webhook_url = os.getenv("FEISHU_WEBHOOK_URL")
     if webhook_url:
-        now = datetime.datetime.now(pytz.timezone('Asia/Shanghai'))
-        text_content = f"🌎 全球营销 & AI 灵感推送 | {now.strftime('%Y-%m-%d %H:%M')}\n\n"
-        for idx, item in enumerate(final_news):
-            text_content += f"{idx+1}. {item.get('title')}\n💡 运营启发: {item.get('summary')}\n🔗 链接: {item.get('url')}\n\n"
-        
-        requests.post(webhook_url, json={"msg_type": "text", "content": {"text": text_content}}, timeout=10)
+        payload = {"msg_type": "text", "content": {"text": report_text}}
+        requests.post(webhook_url, json=payload, timeout=10)
     
     print("--- 运行结束 ---")
 
