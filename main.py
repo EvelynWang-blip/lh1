@@ -6,61 +6,63 @@ import json
 import pytz
 from openai import OpenAI
 
-class NewsFetcher:
+class GlobalTrendRadar:
     def __init__(self):
-        # 1. 垂直类目关键词配置
-        self.keywords = [
-            "TikTok viral phone case", 
-            "iPhone accessories trend", 
-            "Magsafe accessories trending",
-            "Casetify review Reddit",
-            "aesthetic iPhone setup TikTok"
+        # 1. 核心趋势源 (覆盖 TikTok/YT/FB/Google 发现页聚合)
+        self.trend_sources = [
+            {"name": "Google Trends (Tech)", "url": "https://trends.google.com/trends/trendingsearches/daily/rss?geo=US"},
+            {"name": "Social Media Today (Platform Trends )", "url": "https://www.socialmediatoday.com/feeds/news/"},
+            {"name": "Marketing Brew (Industry Hot )", "url": "https://www.marketingbrew.com/rss"}
         ]
-        # 2. 吐槽/需求类关键词 (用于抓取用户痛点)
-        self.complaint_keywords = ["phone case complaints reddit", "iPhone case problems"]
+        # 2. 垂直社区发现页 (Reddit )
+        self.reddit_subs = ["tech", "ecommerce", "gadgets", "phonecases"]
 
-    def fetch_targeted_news(self):
-        data = {"trends": [], "complaints": [], "brands": []}
+    def fetch_trends(self):
+        data = {"hot_search": [], "platform_trends": [], "community_voice": []}
         
-        # A. 从 Reddit 抓取手机配件深度讨论 (r/phonecases, r/iphone)
-        reddit_subs = ["phonecases", "iphone", "magsafe"]
-        for sub in reddit_subs:
+        # A. 抓取 Google 发现页热搜
+        try:
+            feed = feedparser.parse(self.trend_sources[0]["url"])
+            for e in feed.entries[:5]:
+                data["hot_search"].append({"title": e.title, "url": e.link})
+        except: pass
+
+        # B. 抓取 TikTok/YT/FB 平台趋势与达人动态
+        try:
+            feed = feedparser.parse(self.trend_sources[1]["url"])
+            for e in feed.entries[:5]:
+                data["platform_trends"].append({"title": e.title, "url": e.link, "source": "SocialMediaToday"})
+        except: pass
+
+        # C. 抓取 Reddit 垂直社区热议 (用户兴趣/吐槽)
+        for sub in self.reddit_subs:
             try:
                 headers = {'User-Agent': 'Mozilla/5.0'}
-                url = f"https://www.reddit.com/r/{sub}/hot.json?limit=5"
+                url = f"https://www.reddit.com/r/{sub}/hot.json?limit=3"
                 resp = requests.get(url, headers=headers, timeout=10 )
                 if resp.status_code == 200:
                     for post in resp.json()['data']['children']:
                         p = post['data']
-                        data["trends"].append({"title": f"[{sub}] {p['title']}", "url": f"https://www.reddit.com{p['permalink']}"} )
+                        data["community_voice"].append({"title": f"[{sub}] {p['title']}", "url": f"https://www.reddit.com{p['permalink']}"} )
             except: pass
-
-        # B. 从 Hacker News/Google News 聚合中抓取 Casetify 及配件动态
-        try:
-            brand_url = "https://hn.algolia.com/api/v1/search?query=Casetify+iPhone+accessories&tags=story"
-            resp = requests.get(brand_url, timeout=10 )
-            if resp.status_code == 200:
-                for hit in resp.json().get('hits', [])[:5]:
-                    data["brands"].append({"title": hit['title'], "url": hit.get('url') or f"https://news.ycombinator.com/item?id={hit['objectID']}"} )
-        except: pass
 
         return data
 
 def main():
-    print("--- 启动【手机配件】私域深度内参系统 ---")
-    fetcher = NewsFetcher()
-    raw_data = fetcher.fetch_targeted_news()
+    print("--- 启动【全球趋势雷达】私域内参系统 ---")
+    radar = GlobalTrendRadar()
+    raw_data = radar.fetch_trends()
     
-    # 尝试使用 AI 总结
+    # 尝试使用 AI 深度总结
     report_text = ""
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
     try:
         prompt = """
-        你是一名资深的手机配件跨境电商专家。请根据提供的资讯，围绕【手机壳、Magsafe、iPhone周边】输出报告：
-        1. TikTok/IG爆款：总结近期流行的手机壳风格、审美趋势。
-        2. 用户痛点：总结Reddit上对手机壳的吐槽（如发黄、不防摔、Magsafe吸力弱等）。
-        3. 竞品动态：重点分析Casetify等品牌的最新动作。
-        4. 文案选题：提供3-5个适合FB群组的互动选题。
+        你是一名顶尖跨境电商趋势分析师。请根据以下抓取到的【全平台热搜、社媒趋势、社区讨论】，输出一份深度运营报告：
+        1. 发现页热搜：总结Google/TikTok/YT上的实时热点及达人动向。
+        2. 科技电商热点：重点分析跨境电商、3C配件行业的节日热点及行业动态。
+        3. 用户兴趣点：从Reddit讨论中提取用户的真实兴趣、需求及对现有产品的吐槽。
+        4. FB私域选题：基于以上热点，提供3-5个高互动的文案选题建议。
         输出JSON，键为'report'。
         """
         response = client.chat.completions.create(
@@ -70,16 +72,19 @@ def main():
         )
         report_text = json.loads(response.choices[0].message.content).get("report", "")
     except Exception as e:
-        print(f"DEBUG: AI 总结失败 ({e})，进入精准兜底模式。")
-        # --- 精准兜底：直接按类目输出抓取到的垂直热点 ---
-        report_text = "⚠️ [AI 总结暂不可用，以下为您搜集到的垂直类目热点]\n\n"
-        report_text += "🔥 手机配件/Magsafe 热门讨论:\n"
-        for item in raw_data["trends"][:6]:
+        print(f"DEBUG: AI 总结失败 ({e})，进入结构化聚合模式。")
+        # --- 结构化聚合模式：无AI时也能清晰看到分类热点 ---
+        report_text = "⚠️ [AI 额度不足，为您聚合全平台实时热点]\n\n"
+        report_text += "🔥 Google/平台热搜 (发现页):\n"
+        for item in raw_data["hot_search"][:4]:
             report_text += f"- {item['title']}\n  🔗 {item['url']}\n"
-        report_text += "\n🏢 竞品/品牌动态 (Casetify等):\n"
-        for item in raw_data["brands"][:4]:
+        report_text += "\n📱 社媒趋势/达人动态 (TikTok/YT/FB):\n"
+        for item in raw_data["platform_trends"][:4]:
             report_text += f"- {item['title']}\n  🔗 {item['url']}\n"
-        report_text += "\n💡 运营提示：请重点关注 Reddit 帖子中的评论区，那里藏着用户最真实的购买动机和吐槽！"
+        report_text += "\n💬 垂直社区真实声音 (Reddit):\n"
+        for item in raw_data["community_voice"][:5]:
+            report_text += f"- {item['title']}\n  🔗 {item['url']}\n"
+        report_text += "\n💡 节日提醒：请关注近期全球节日热度，将热搜词融入您的文案中！"
 
     # 推送逻辑
     webhook_url = os.getenv("FEISHU_WEBHOOK_URL")
@@ -88,7 +93,7 @@ def main():
         payload = {
             "msg_type": "text",
             "content": {
-                "text": f"📱 手机配件私域运营内参 | {now.strftime('%Y-%m-%d')}\n\n{report_text}"
+                "text": f"🌐 全球趋势雷达 & 私域灵感 | {now.strftime('%Y-%m-%d')}\n\n{report_text}"
             }
         }
         requests.post(webhook_url, json=payload, timeout=10)
