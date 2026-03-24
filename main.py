@@ -8,59 +8,60 @@ from openai import OpenAI
 
 class NewsFetcher:
     def __init__(self):
-        # 1. 海外社媒趋势与案例 (TikTok/IG/私域)
-        self.marketing_sources = [
-            {"name": "Social Media Today", "url": "https://www.socialmediatoday.com/feeds/news/"},
-            {"name": "Marketing Brew", "url": "https://www.marketingbrew.com/rss"}
+        # 1. 垂直类目关键词配置
+        self.keywords = [
+            "TikTok viral phone case", 
+            "iPhone accessories trend", 
+            "Magsafe accessories trending",
+            "Casetify review Reddit",
+            "aesthetic iPhone setup TikTok"
         ]
-        # 2. Reddit 用户深度讨论 (吐槽/需求 )
-        self.reddit_url = "https://www.reddit.com/r/ecommerce/hot.json?limit=10"
-        # 3. 竞品与品牌动态 (以 Casetify 等品牌为关键词 )
-        self.brand_query = "https://hn.algolia.com/api/v1/search?query=Casetify+DTC+brand&tags=story"
+        # 2. 吐槽/需求类关键词 (用于抓取用户痛点)
+        self.complaint_keywords = ["phone case complaints reddit", "iPhone case problems"]
 
-    def fetch_all(self ):
-        data = {"marketing": [], "reddit": [], "brands": []}
-        # 抓取营销趋势
-        for s in self.marketing_sources:
+    def fetch_targeted_news(self):
+        data = {"trends": [], "complaints": [], "brands": []}
+        
+        # A. 从 Reddit 抓取手机配件深度讨论 (r/phonecases, r/iphone)
+        reddit_subs = ["phonecases", "iphone", "magsafe"]
+        for sub in reddit_subs:
             try:
-                feed = feedparser.parse(s["url"])
-                for e in feed.entries[:5]:
-                    data["marketing"].append({"title": e.title, "url": e.link, "source": s["name"]})
+                headers = {'User-Agent': 'Mozilla/5.0'}
+                url = f"https://www.reddit.com/r/{sub}/hot.json?limit=5"
+                resp = requests.get(url, headers=headers, timeout=10 )
+                if resp.status_code == 200:
+                    for post in resp.json()['data']['children']:
+                        p = post['data']
+                        data["trends"].append({"title": f"[{sub}] {p['title']}", "url": f"https://www.reddit.com{p['permalink']}"} )
             except: pass
-        # 抓取 Reddit 讨论
+
+        # B. 从 Hacker News/Google News 聚合中抓取 Casetify 及配件动态
         try:
-            headers = {'User-Agent': 'Mozilla/5.0'}
-            resp = requests.get(self.reddit_url, headers=headers, timeout=10)
+            brand_url = "https://hn.algolia.com/api/v1/search?query=Casetify+iPhone+accessories&tags=story"
+            resp = requests.get(brand_url, timeout=10 )
             if resp.status_code == 200:
-                for post in resp.json()['data']['children'][:5]:
-                    p = post['data']
-                    data["reddit"].append({"title": p['title'], "url": f"https://www.reddit.com{p['permalink']}"} )
-        except: pass
-        # 抓取品牌动态
-        try:
-            resp = requests.get(self.brand_query, timeout=10)
-            if resp.status_code == 200:
-                for hit in resp.json().get('hits', [])[:3]:
+                for hit in resp.json().get('hits', [])[:5]:
                     data["brands"].append({"title": hit['title'], "url": hit.get('url') or f"https://news.ycombinator.com/item?id={hit['objectID']}"} )
         except: pass
+
         return data
 
 def main():
-    print("--- 启动私域运营内参系统 (含 AI 兜底) ---")
+    print("--- 启动【手机配件】私域深度内参系统 ---")
     fetcher = NewsFetcher()
-    raw_data = fetcher.fetch_all()
+    raw_data = fetcher.fetch_targeted_news()
     
     # 尝试使用 AI 总结
     report_text = ""
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
     try:
         prompt = """
-        你是一名顶尖跨境私域运营专家。请根据提供的资讯，严格按照以下格式输出一份运营简报：
-        ① 内容模块：TikTok爆款方向、IG审美趋势
-        ② 用户模块：Reddit高互动讨论(吐槽/需求)、Amazon用户评论特征总结
-        ③ 竞品模块：典型品牌动态(如Casetify)
-        ④ 私域与选题：1个社群玩法案例、3-5条FB群组选题建议
-        输出要求：中文，条理清晰。输出JSON，键为'report'。
+        你是一名资深的手机配件跨境电商专家。请根据提供的资讯，围绕【手机壳、Magsafe、iPhone周边】输出报告：
+        1. TikTok/IG爆款：总结近期流行的手机壳风格、审美趋势。
+        2. 用户痛点：总结Reddit上对手机壳的吐槽（如发黄、不防摔、Magsafe吸力弱等）。
+        3. 竞品动态：重点分析Casetify等品牌的最新动作。
+        4. 文案选题：提供3-5个适合FB群组的互动选题。
+        输出JSON，键为'report'。
         """
         response = client.chat.completions.create(
             model="gpt-4o-mini",
@@ -69,18 +70,16 @@ def main():
         )
         report_text = json.loads(response.choices[0].message.content).get("report", "")
     except Exception as e:
-        print(f"DEBUG: AI 总结失败 ({e})，进入无 AI 模式。")
-        # --- 兜底逻辑：手动拼接原始数据 ---
-        report_text = "⚠️ [提示: AI 额度不足，当前显示原始热点链接]\n\n"
-        report_text += "📌 海外营销趋势:\n"
-        for item in raw_data["marketing"][:5]:
+        print(f"DEBUG: AI 总结失败 ({e})，进入精准兜底模式。")
+        # --- 精准兜底：直接按类目输出抓取到的垂直热点 ---
+        report_text = "⚠️ [AI 总结暂不可用，以下为您搜集到的垂直类目热点]\n\n"
+        report_text += "🔥 手机配件/Magsafe 热门讨论:\n"
+        for item in raw_data["trends"][:6]:
             report_text += f"- {item['title']}\n  🔗 {item['url']}\n"
-        report_text += "\n💬 Reddit 用户讨论:\n"
-        for item in raw_data["reddit"][:3]:
+        report_text += "\n🏢 竞品/品牌动态 (Casetify等):\n"
+        for item in raw_data["brands"][:4]:
             report_text += f"- {item['title']}\n  🔗 {item['url']}\n"
-        report_text += "\n🏢 品牌/竞品动态:\n"
-        for item in raw_data["brands"][:2]:
-            report_text += f"- {item['title']}\n  🔗 {item['url']}\n"
+        report_text += "\n💡 运营提示：请重点关注 Reddit 帖子中的评论区，那里藏着用户最真实的购买动机和吐槽！"
 
     # 推送逻辑
     webhook_url = os.getenv("FEISHU_WEBHOOK_URL")
@@ -89,7 +88,7 @@ def main():
         payload = {
             "msg_type": "text",
             "content": {
-                "text": f"📊 私域运营深度内参 | {now.strftime('%Y-%m-%d')}\n\n{report_text}"
+                "text": f"📱 手机配件私域运营内参 | {now.strftime('%Y-%m-%d')}\n\n{report_text}"
             }
         }
         requests.post(webhook_url, json=payload, timeout=10)
